@@ -44,7 +44,9 @@ class MakeMore():
         count = logits.exp()
         probs = count / count.sum(1, keepdims=True)
 
-        self.loss = -probs[t.arange(self.num), self.ys].log().mean()
+        data_loss = -probs[t.arange(self.num), self.ys].log().mean()
+        regularization_loss = 0.01 * (self.W**2).mean()
+        self.loss = data_loss + regularization_loss
 
 
     def backward_pass(self):
