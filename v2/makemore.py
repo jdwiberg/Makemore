@@ -2,6 +2,7 @@ import torch
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
 import random
+import math
 
 
 class Makemore():
@@ -10,8 +11,10 @@ class Makemore():
     stoi = {chr(i+96): i for i in range(1, 27)}
     stoi['.'] = 0
     itos = {v: k for k, v in stoi.items()}
+    
+    step = 0
 
-    def __init__(self, filepath: str, block_size: int, learning_rate: float):
+    def __init__(self, filepath: str, steps: int, block_size: int, batch_size: int, lr_start: float, lr_end: float, lookup_dim: int, hidden_dim: int):
         self.names = open(filepath, 'r').read().splitlines()
 
         self.X_tr: torch.LongTensor = None
@@ -24,11 +27,11 @@ class Makemore():
         self.Y_test: torch.LongTensor = None
 
         self.g = torch.Generator().manual_seed(2147483647)
-        self.C = torch.randn((27, 10), generator=self.g)
-        self.W1 = torch.randn((30, 200), generator=self.g)
-        self.b1 = torch.randn(200, generator=self.g)
+        self.C = torch.randn((27, lookup_dim), generator=self.g)
+        self.W1 = torch.randn((lookup_dim * block_size, hidden_dim), generator=self.g)
+        self.b1 = torch.randn(hidden_dim, generator=self.g)
         # h = 32 x 100
-        self.W2 = torch.randn((200, 27), generator=self.g)
+        self.W2 = torch.randn((hidden_dim, 27), generator=self.g)
         self.b2 = torch.randn(27, generator=self.g)
         self.params = [self.C, self.W1, self.b1, self.W2, self.b2]
         self.param_count = sum(p.nelement() for p in self.params)
@@ -43,8 +46,13 @@ class Makemore():
 
         # Hyper Parameters
         self.block_size = block_size  # how many characters do we take to predict the next
-        self.learning_rate: float = learning_rate
-        self.batch_size: int = 32
+        self.lr_start: float = lr_start
+        self.lr_min: float = lr_end
+        self.batch_size: int = batch_size
+        self.steps: int = steps
+        self.lookup_dim: int = lookup_dim
+
+
 
     def create_data(self, names):
         X, Y = [], []
@@ -67,12 +75,16 @@ class Makemore():
         self.X_dev, self.Y_dev = self.create_data(self.names[n1:n2])
         self.X_test, self.Y_test = self.create_data(self.names[n2:])
 
+    def get_lr(self, i):
+        # Cosine learning rate decay
+        return self.lr_min + 0.5 * (self.lr_start - self.lr_min) * (1 + math.cos(math.pi * i / self.steps))
+
     def forward_pass(self):
         # minibatch construction
         ix = torch.randint(0, self.X_tr.shape[0], (self.batch_size,))
         
         emb = self.C[self.X_tr[ix]]
-        h = torch.tanh(emb.view(-1, 30) @ self.W1 + self.b1) # first layer
+        h = torch.tanh(emb.view(-1, self.block_size * self.lookup_dim) @ self.W1 + self.b1) # first layer
         logits = h @ self.W2 + self.b2 # second / final layer
 
         # counts = logits.exp()
@@ -88,11 +100,12 @@ class Makemore():
 
     def update(self):
         for p in self.params:
-            p.data += -self.learning_rate * p.grad
+            p.data += (-1 * (self.get_lr(self.step))) * p.grad
+        self.step += 1
     
     def get_loss(self, X, Y):
         emb = self.C[X]
-        h = torch.tanh(emb.view(-1, 30) @ self.W1 + self.b1)
+        h = torch.tanh(emb.view(-1, self.block_size * self.lookup_dim) @ self.W1 + self.b1)
         logits = h @ self.W2 + self.b2
         self.dev_loss = F.cross_entropy(logits, Y)
         return self.dev_loss.item()
@@ -104,7 +117,7 @@ class Makemore():
 
         while True:
             emb = self.C[torch.tensor([context])]
-            h = torch.tanh(emb.view(-1, 30) @ self.W1 + self.b1)
+            h = torch.tanh(emb.view(-1, self.block_size * self.lookup_dim) @ self.W1 + self.b1)
             logits = h @ self.W2 + self.b2
             counts = logits.exp()
             probs = counts / counts.sum(1, keepdims=True)
