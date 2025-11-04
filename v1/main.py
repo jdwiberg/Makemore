@@ -1,9 +1,13 @@
 from makemore import MakeMore
+import sys
 
 def main():
 
     print("Initializing Makemore...\n")
-    model = MakeMore('names.txt')
+    if len(sys.argv) != 2:
+        print("Usage: python main.py <path_to_names_file>")
+        return
+    model = MakeMore(sys.argv[1], )
     model.create_data()
 
     print("Training Makemore...\n")
